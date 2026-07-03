@@ -1,0 +1,254 @@
+services:
+  eureka-server:
+    build: ./eureka-server
+    container_name: eureka-server
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - TZ=Europe/Belgrade
+    networks:
+      - rzk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8761/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  config-server:
+    build: ./config-server
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+    environment:
+      - TZ=Europe/Belgrade
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - EUREKA_INSTANCE_PREFERIPADDRESS=true
+    volumes:
+      - ./config-repo:/config-repo:ro
+    networks:
+      - rzk-network
+    restart: unless-stopped
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+    ports:
+      - "8765:8765"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - EUREKA_INSTANCE_PREFERIPADDRESS=true
+      - JWT_SECRET=${JWT_SECRET}
+      - TZ=Europe/Belgrade
+    networks:
+      - rzk-network
+    restart: unless-stopped
+
+  # -------------------------
+  # DATABASES
+  # -------------------------
+  user-db:
+    image: mysql:8.4
+    container_name: user-db
+    environment:
+      - MYSQL_DATABASE=user_db
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - TZ=Europe/Belgrade
+    ports:
+      - "3307:3306"
+    volumes:
+      - user_db_data:/var/lib/mysql
+    networks:
+      - rzk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  vehicle-db:
+    image: mysql:8.4
+    container_name: vehicle-db
+    environment:
+      - MYSQL_DATABASE=vehicle_db
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - TZ=Europe/Belgrade
+    ports:
+      - "3308:3306"
+    volumes:
+      - vehicle_db_data:/var/lib/mysql
+    networks:
+      - rzk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  reservation-db:
+    image: mysql:8.4
+    container_name: reservation-db
+    environment:
+      - MYSQL_DATABASE=reservation_db
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - TZ=Europe/Belgrade
+    ports:
+      - "3309:3306"
+    volumes:
+      - reservation_db_data:/var/lib/mysql
+    networks:
+      - rzk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  payment-db:
+    image: mysql:8.4
+    container_name: payment-db
+    environment:
+      - MYSQL_DATABASE=payment_db
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - TZ=Europe/Belgrade
+    ports:
+      - "3310:3306"
+    volumes:
+      - payment_db_data:/var/lib/mysql
+    networks:
+      - rzk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # -------------------------
+  # SERVICES
+  # -------------------------
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      user-db:
+        condition: service_healthy
+      config-server:
+        condition: service_started
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+      - SERVER_PORT=8082
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - EUREKA_INSTANCE_PREFERIPADDRESS=true
+      - SPRING_DATASOURCE_URL=jdbc:mysql://user-db:3306/user_db?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - TZ=Europe/Belgrade
+    networks:
+      - rzk-network
+    restart: unless-stopped
+
+  vehicle-service:
+    build: ./vehicle-service
+    container_name: vehicle-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      vehicle-db:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SERVER_PORT=8081
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - EUREKA_INSTANCE_PREFERIPADDRESS=true
+      - SPRING_DATASOURCE_URL=jdbc:mysql://vehicle-db:3306/vehicle_db?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - TZ=Europe/Belgrade
+    networks:
+      - rzk-network
+    restart: unless-stopped
+
+  payment-service:
+    build: ./payment-service
+    container_name: payment-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      payment-db:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SERVER_PORT=8084
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - EUREKA_INSTANCE_PREFERIPADDRESS=true
+      - SPRING_DATASOURCE_URL=jdbc:mysql://payment-db:3306/payment_db?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - TZ=Europe/Belgrade
+    networks:
+      - rzk-network
+    restart: unless-stopped
+
+  reservation-service:
+    build: ./reservation-service
+    container_name: reservation-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      reservation-db:
+        condition: service_healthy
+      vehicle-service:
+        condition: service_started
+      user-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+    ports:
+      - "8083:8083"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SERVER_PORT=8083
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - EUREKA_INSTANCE_PREFERIPADDRESS=true
+      - SPRING_DATASOURCE_URL=jdbc:mysql://reservation-db:3306/reservation_db?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - TZ=Europe/Belgrade
+    networks:
+      - rzk-network
+    restart: unless-stopped
+
+networks:
+  rzk-network:
+    driver: bridge
+
+volumes:
+  user_db_data:
+  vehicle_db_data:
+  reservation_db_data:
+  payment_db_data:
